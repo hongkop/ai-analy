@@ -1,74 +1,61 @@
 import os
 import json
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 import google.generativeai as genai
 from pydantic import BaseModel
 from typing import List
 
 app = FastAPI()
 
-# កំណត់ការភ្ជាប់ជាមួយ Gemini API
-# កុំភ្លេចដាក់ GEMINI_API_KEY ក្នុង Environment Variables របស់ Railway
+# កំណត់ API Key (យកពី Google AI Studio)
 genai.configure(api_key=os.environ.get("AIzaSyDZ0LxeLj2laZmA9AZo6L9yqzzthZKyRno"))
 model = genai.GenerativeModel('gemini-1.5-flash')
 
 class Candle(BaseModel):
-    time: str
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: int
+    t: str # time
+    o: float # open
+    h: float # high
+    l: float # low
+    c: float # close
 
 class AnalysisRequest(BaseModel):
     symbol: str
-    timeframe: str
-    position_status: str  # "NONE", "BUY", ឬ "SELL"
+    pos_status: str
     candles: List[Candle]
-
-@app.get("/")
-def read_root():
-    return {"status": "AI Trading Server is running"}
 
 @app.post("/analyze")
 async def analyze_market(data: AnalysisRequest):
-    # រៀបចំទិន្នន័យ Candle ជាអត្ថបទសម្រាប់ឱ្យ AI មើល
-    candle_str = ""
-    for c in data.candles:
-        candle_str += f"T: {c.time}, O: {c.open}, H: {c.high}, L: {c.low}, C: {c.close}\n"
-
-    # បង្កើត Prompt ឱ្យមានលក្ខណៈជា Expert Trader
+    price_data = "\n".join([f"{c.t}: O:{c.o} H:{c.h} L:{c.l} C:{c.c}" for c in data.candles])
+    
     prompt = f"""
-    You are a professional algorithmic trader. Analyze the following {data.timeframe} data for {data.symbol}:
-    
-    Current Position: {data.position_status}
-    
-    Recent Price Data:
-    {candle_str}
-    
+    You are a Senior Forex Trader. Analyze {data.symbol} M1 data:
+    {price_data}
+
+    Current Status: {data.pos_status}
+
     Task:
-    1. If position_status is 'NONE', decide if we should ENTER (BUY, SELL, or WAIT).
-    2. If position_status is 'BUY' or 'SELL', decide if we should HOLD or CLOSE.
-    3. Minimum confidence for entry is 70%.
-    
-    Response must be strictly in JSON format like this:
+    1. If status is 'NONE', decide: BUY, SELL, or WAIT.
+    2. If status is 'OPEN', decide: HOLD or CLOSE.
+    3. Provide precise SL and TP prices based on technical levels (Support/Resistance).
+
+    Response must be strictly JSON:
     {{
         "decision": "BUY/SELL/WAIT/HOLD/CLOSE",
         "confidence": 0-100,
-        "analysis": "short technical reason"
+        "sl": price,
+        "tp": price,
+        "reason": "short text"
     }}
     """
-
+    
     try:
         response = model.generate_content(prompt)
-        # សម្អាតអត្ថបទដែល AI ផ្ដល់មក (ជួនកាល AI ថែម ```json ... ```)
-        clean_response = response.text.replace("```json", "").replace("```", "").strip()
-        result = json.loads(clean_response)
-        return result
-    except Exception as e:
-        return {"decision": "WAIT", "confidence": 0, "error": str(e)}
+        # សម្អាត JSON string
+        clean_json = response.text.replace("```json", "").replace("```", "").strip()
+        return json.loads(clean_json)
+    except:
+        return {"decision": "WAIT", "confidence": 0, "sl": 0, "tp": 0}
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
